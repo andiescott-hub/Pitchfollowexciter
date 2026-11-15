@@ -59,6 +59,7 @@ public:
         attack  = 1.0f - std::exp (-1.0f / (0.004f * (float) sr));
         release = 1.0f - std::exp (-1.0f / (0.050f * (float) sr));
         peakRel = std::exp (-1.0f / (3.0f * (float) sr));
+        fixedCoef = 1.0f - std::exp (-1.0f / (0.020f * (float) sr));
     }
 
     void setLookahead (bool on) { delay = on ? 4096 * mul : 0; }
@@ -299,7 +300,8 @@ private:
             B.uiOn.store (e.on, std::memory_order_relaxed);
             B.qHead = (B.qHead + 1) & 127; --B.qCount;
         }
-        if (B.fixed) B.cur = B.fixedLog; else B.cur += (B.tgtLog - B.cur) * B.glideCoef;
+        // fixed bands still move smoothly (20 ms) when switched on or dragged, so the filter never jumps
+        if (B.fixed) B.cur += (B.fixedLog - B.cur) * fixedCoef; else B.cur += (B.tgtLog - B.cur) * B.glideCoef;
         const float tg = B.tgtOn ? 1.0f : 0.0f;
         B.gate += (tg - B.gate) * (tg > B.gate ? attack : release);
         if ((B.coefCount++ & 15) == 0) {
@@ -319,7 +321,7 @@ private:
     double sr = 44100.0;
     int mul = 1, delay = 0, maxBlock = 0, bass = -1;
     int64_t now = 0, writePos = 0, mask = 0;
-    float attack = 1, release = 1, peakRel = 1;
+    float attack = 1, release = 1, peakRel = 1, fixedCoef = 1;
     bool resUsed[kRes] = {};
     Res res[kRes];
     Band bands[kBands];

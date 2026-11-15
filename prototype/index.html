@@ -338,10 +338,14 @@ function updateGains(){
 const pos=()=>playing?clamp(off0+ac.currentTime-t0,off0,dur()):off0;
 function startBand(b,t,at){
   if(!b.buf||!b.nodes)return;
-  for(const o of[b.src,b.src2])if(o){try{o.stop(t)}catch(e){}}
-  const o=clamp(at,0,Math.max(0,dur()-.001));
-  const s=ac.createBufferSource();s.buffer=b.buf;s.connect(b.nodes.inp);s.start(t,o);b.src=s;b.nodes.hp.frequency.value=.4*edges(b)[0];
-  const s2=ac.createBufferSource();s2.buffer=b.buf2;s2.connect(b.nodes.ge);s2.start(t,o);b.src2=s2;
+  // A re-rendered band replaces its audio mid-playback. Crossfade old to new over 40 ms so the swap cannot tick.
+  const F=.04,swap=!!b.src,o=clamp(at,0,Math.max(0,dur()-.001));
+  if(swap){for(const f of b.fades){f.gain.setValueAtTime(1,t);f.gain.linearRampToValueAtTime(0,t+F)}
+    for(const old of[b.src,b.src2]){try{old.stop(t+F+.01)}catch(e){}}}
+  const mk=(buf,dest)=>{const s=ac.createBufferSource(),f=ac.createGain();s.buffer=buf;s.connect(f);f.connect(dest);
+    if(swap){f.gain.setValueAtTime(0,t);f.gain.linearRampToValueAtTime(1,t+F)}s.start(t,o);return[s,f]};
+  const[s,f1]=mk(b.buf,b.nodes.inp),[s2,f2]=mk(b.buf2,b.nodes.ge);
+  b.src=s;b.src2=s2;b.fades=[f1,f2];b.nodes.hp.frequency.setTargetAtTime(.4*edges(b)[0],t,.02);
 }
 function stopSrc(){[srcDry,...bands.flatMap(b=>[b.src,b.src2])].forEach(s=>{if(s){try{s.stop()}catch(e){}}});srcDry=null;bands.forEach(b=>b.src=b.src2=null)}
 function start(at){
