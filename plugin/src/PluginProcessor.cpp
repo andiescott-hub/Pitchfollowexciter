@@ -107,7 +107,7 @@ void PfxProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         p.type     = (int) band[b].type->load();
         p.focus    = band[b].focus->load();
         p.glide    = band[b].glide->load();
-        anySolo = anySolo || (p.enabled && band[b].solo->load() > 0.5f && band[b].byp->load() < 0.5f);   // a bypassed band drops out of solo
+        anySolo = anySolo || (p.enabled && band[b].solo->load() > 0.5f);
     }
     const float dryTarget = (listen == 1 || anySolo) ? 0.0f : 1.0f;
     const int delay = engine.latency();
@@ -123,8 +123,11 @@ void PfxProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
 
         for (int b = 0; b < kBands; ++b) {
             if (! engine.params[b].enabled) { lastGain[b] = 0.0f; continue; }
-            const bool muted = listen == 2 || band[b].byp->load() > 0.5f || (anySolo && band[b].solo->load() < 0.5f);
-            const float target = muted ? 0.0f : juce::Decibels::decibelsToGain (engine.params[b].amountDb);
+            const bool byp = band[b].byp->load() > 0.5f, soloed = band[b].solo->load() > 0.5f;
+            // solo + bypass: the band's clean copy of the note at unity, nothing generated
+            const bool muted = listen == 2 || (anySolo && ! soloed) || (byp && ! soloed);
+            const float target = muted ? 0.0f : byp ? 1.0f : juce::Decibels::decibelsToGain (engine.params[b].amountDb);
+            const float genTarget = byp ? 0.0f : 1.0f;
             const float* gen;
             if (osChoice == 0) {
                 engine.generate (b, engine.s (b), engine.q (b), osBuf.getWritePointer (0), n);
@@ -140,8 +143,8 @@ void PfxProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
                 o.processSamplesDown (block);
                 gen = osBuf.getReadPointer (0);
             }
-            engine.finish (b, gen, wet.data(), n, lastGain[b], target);
-            lastGain[b] = target;
+            engine.finish (b, gen, wet.data(), n, lastGain[b], target, lastGen[b], genTarget);
+            lastGain[b] = target; lastGen[b] = genTarget;
         }
 
         const float dryStep = (dryTarget - lastDry) / (float) n;

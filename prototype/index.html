@@ -322,16 +322,18 @@ function mkNodes(b){
   // the band, so no band can add energy under the notes it follows
   const g=ac.createGain(),ge=ac.createGain(),inp=ac.createGain(),hp=ac.createBiquadFilter();
   hp.type='highpass';hp.Q.value=.707;hp.frequency.value=.4*edges(b)[0];
-  g.gain.value=0;ge.gain.value=b.cp.ev;inp.connect(g);inp.connect(sh);sh.connect(hp);ge.connect(hp);hp.connect(g);g.connect(master);
-  b.nodes={sh,g,ge,inp,hp};
+  g.gain.value=0;ge.gain.value=b.cp.ev;const gg=ac.createGain();inp.connect(g);inp.connect(sh);sh.connect(hp);ge.connect(hp);hp.connect(gg);gg.connect(g);g.connect(master);
+  b.nodes={sh,g,ge,inp,hp,gg};
 }
-const anySolo=()=>bands.some(b=>b.solo&&!b.byp);   // bypassing a soloed band drops out of solo, so you hear the mix without it
+const anySolo=()=>bands.some(b=>b.solo);
+// Solo + bypass: hear the band's clean copy of the note, with nothing generated on top.
+const cleanOnly=b=>b.byp&&b.solo;
 const dryGain=()=>listen==='added'||anySolo()?0:1;
-const bandGain=b=>listen==='dry'||b.byp||(anySolo()&&!b.solo)?0:b.pk*10**(b.amount/20);
+const bandGain=b=>listen==='dry'||(anySolo()&&!b.solo)||(b.byp&&!b.solo)?0:b.byp?b.pk:b.pk*10**(b.amount/20);
 function updateGains(){
   dirty=true;if(!ac)return;const t=ac.currentTime;
   dryG.gain.setTargetAtTime(dryGain(),t,.012);
-  bands.forEach(b=>{if(b.nodes)b.nodes.g.gain.setTargetAtTime(bandGain(b)||0,t,.012)});
+  bands.forEach(b=>{if(b.nodes){b.nodes.g.gain.setTargetAtTime(bandGain(b)||0,t,.012);b.nodes.gg.gain.setTargetAtTime(cleanOnly(b)?0:1,t,.012)}});
 }
 const pos=()=>playing?clamp(off0+ac.currentTime-t0,off0,dur()):off0;
 function startBand(b,t,at){
@@ -414,10 +416,10 @@ const sRe=new Float64Array(SN),sIm=new Float64Array(SN),pRe=new Float64Array(SN)
 const dDry=new Float32Array(SN/2).fill(-140),dPost=new Float32Array(SN/2).fill(-140);
 function spectrum(){
   const N=SN,w=hann(N),fft=getFFT(N),o=Math.round(pos()*S.sr)-N/2,n=S.n,m=S.mono,dg=dryGain();let wet=0;
-  const act=bands.filter(b=>b.data&&bandGain(b)>0).map(b=>({d:b.data,e:b.ev,g:bandGain(b),p:b.cp}));
+  const act=bands.filter(b=>b.data&&bandGain(b)>0).map(b=>({d:b.data,e:b.ev,g:bandGain(b),p:b.cp,c:cleanOnly(b)}));
   for(let i=0;i<N;i++){
     const k=o+i,ok=k>=0&&k<n,x=ok?m[k]:0;let y=x*dg;
-    if(ok)for(const a of act)y+=a.g*(sat(a.d[k],a.p)+a.p.ev*a.e[k]);
+    if(ok)for(const a of act)y+=a.g*(a.c?a.d[k]:sat(a.d[k],a.p)+a.p.ev*a.e[k]);
     sRe[i]=x;pRe[i]=y;wet+=y-x*dg;
   }
   wet/=N;                                           // the audio path has a DC blocker; mirror it here

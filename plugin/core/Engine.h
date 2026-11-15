@@ -102,17 +102,19 @@ public:
     }
 
     // Step 3. Highpass the generated part below the band, then mix: wet += gain * (clean copy + generated).
-    void finish (int b, const float* gen, float* wet, int n, float gainFrom, float gainTo)
+    // genFrom/genTo scale the generated part only: 0 leaves just the clean copy of the note.
+    void finish (int b, const float* gen, float* wet, int n, float gainFrom, float gainTo, float genFrom = 1.0f, float genTo = 1.0f)
     {
         Band& B = bands[b];
         const float* sIn = B.s.data();
         const float step = n > 1 ? (gainTo - gainFrom) / (float) (n - 1) : 0.0f;
-        float g = gainFrom;
-        for (int i = 0; i < n; ++i, g += step) {
+        const float genStep = n > 1 ? (genTo - genFrom) / (float) (n - 1) : 0.0f;
+        float g = gainFrom, gg = genFrom;
+        for (int i = 0; i < n; ++i, g += step, gg += genStep) {
             const float x = gen[i], y = B.hb0 * x + B.hz1;
             B.hz1 = B.hb1 * x - B.ha1 * y + B.hz2;
             B.hz2 = B.hb0 * x - B.ha2 * y;
-            wet[i] += g * (sIn[i] + y);
+            wet[i] += g * (sIn[i] + gg * y);
         }
     }
 

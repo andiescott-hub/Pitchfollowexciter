@@ -49,7 +49,7 @@ private:
     std::vector<float> mono, wet;
     juce::AudioBuffer<float> osBuf;
     std::unique_ptr<juce::dsp::Oversampling<float>> os[kBands][3];   // 4x, 8x, 16x
-    float lastGain[kBands] {}, lastDry = 1.0f;
+    float lastGain[kBands] {}, lastGen[kBands] { 1.0f, 1.0f, 1.0f, 1.0f }, lastDry = 1.0f;
 
     // dry delay for lookahead mode
     static constexpr int kDelaySize = 32768;
