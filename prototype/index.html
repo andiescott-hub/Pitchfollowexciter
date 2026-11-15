@@ -34,6 +34,7 @@ h1 small{font:500 12px var(--num);color:var(--mute);margin-left:6px}
 .pname i{width:10px;height:10px;border-radius:50%;background:var(--c)}
 #pnote{font:500 12px var(--num);color:var(--mute);white-space:nowrap}
 .pbtn{display:flex;gap:5px}
+#type{min-height:28px;padding:0 6px;font-size:12px;width:100%}
 .pbtn button{min-height:28px;width:32px;padding:0;justify-content:center;border-radius:7px;font:700 12px var(--ui)}
 .pbtn button[aria-pressed=true]{background:var(--c);border-color:var(--c);color:#10131a}
 .knobs{display:flex;gap:10px}
@@ -56,7 +57,8 @@ h1 small{font:500 12px var(--num);color:var(--mute);margin-left:6px}
 #hint{margin:0;color:var(--mute);font-size:12.5px}
 @media(max-width:680px){
   .panel{position:static;transform:none;border-radius:0;border-width:1px 0 0;box-shadow:none;flex-wrap:wrap;justify-content:center}
-  .pinfo{flex-direction:row;align-items:center;justify-content:space-between;width:100%}
+  .pinfo{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;width:100%}
+  #type{width:auto;flex:1 1 100%}
   #status{text-align:left;flex-basis:100%}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -79,6 +81,7 @@ h1 small{font:500 12px var(--num);color:var(--mute);margin-left:6px}
         <button id="byp" aria-pressed="false" aria-label="Bypass this band" title="Bypass this band">⏻</button>
         <button id="del" aria-label="Remove this band" title="Remove this band">✕</button>
       </div>
+      <select id="type" aria-label="Saturation type"><option value="tube">Tube</option><option value="tape">Tape</option><option value="transistor">Transistor</option></select>
     </div>
     <div class="knobs" id="knobs"></div>
   </div>
@@ -94,7 +97,7 @@ h1 small{font:500 12px var(--num);color:var(--mute);margin-left:6px}
   <label class="lab" for="key">Key<select id="key"><option value="off">Off</option><option value="auto">Auto-detect</option></select></label>
   <button id="link" aria-pressed="false" title="Upper bands prefer harmonics of the lowest band's note">Bass link</button>
 </div>
-<p id="hint">Double-click the display to add a band (up to four). Drag a band to move it, drag its dot up or down for Amount, scroll over it for Focus.</p>
+<p id="hint">Double-click the display to add a band (up to four). Drag a band to move it, drag its dot up or down for Amount, scroll over it for Focus. Band edges snap together when they meet (hold Alt to place freely).</p>
 
 <script>
 (()=>{
@@ -120,6 +123,7 @@ const fmt=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
 const dur=()=>S.n/S.sr||0;
 const interp=(p,f)=>{if(f<=p[0][0])return p[0][1];for(let i=1;i<p.length;i++)if(f<=p[i][0]){const a=p[i-1],b=p[i];return a[1]+(b[1]-a[1])*Math.log(f/a[0])/Math.log(b[0]/a[0])}return p[p.length-1][1]};
 const fsc=focus=>2**((focus-.5)*1.4);
+const gsc=g=>2**((g-.5)*4);
 const winOf=b=>interp(WIN,b.fc)*fsc(b.focus);
 const edges=b=>{const w=winOf(b);return[b.fc*2**(-w/12),b.fc*2**(w/12)]};
 const resFor=f=>f<120?0:f<500?1:f<2000?2:3;
@@ -226,14 +230,14 @@ function computeMasks(){
     });
     t.mask=mask;
     let s=0;for(let f=0;f<t.nF;f++)s=(s*31+(mask[f]?Math.round(t.freq[f]*8):0))|0;
-    a.newSig=s+'|'+a.fc.toFixed(1)+'|'+a.focus.toFixed(3);
+    a.newSig=s+'|'+a.fc.toFixed(1)+'|'+a.focus.toFixed(3)+'|'+a.glide.toFixed(3);
   });
 }
 
 /* ---------- Per-band render: tracked bandpass gives a phase-locked copy of the note ---------- */
 function renderBand(b){
   const t=b.track,r=RES[b.res],n=S.n,sr=S.sr,m=S.mono,out=new Float32Array(n);
-  const gl=interp(GLD,b.fc)*fsc(b.focus),Q=interp(QS,b.fc),gc=1-Math.exp(-1/(gl*.001*sr));
+  const gl=interp(GLD,b.fc)*gsc(b.glide),Q=interp(QS,b.fc),gc=1-Math.exp(-1/(gl*.001*sr));
   const att=1-Math.exp(-1/(.004*sr)),rel=1-Math.exp(-1/(.05*sr)),half=r.N/2,hop=r.hop,last=t.nF-1,mk=t.mask;
   const lf=new Float32Array(t.nF);for(let f=0;f<t.nF;f++)lf[f]=Math.log(t.freq[f]);
   let cur=lf[0],g=0,x1=0,x2=0,y1=0,y2=0,cb=0,c1=0,c2=0,pk=0;
@@ -252,11 +256,18 @@ function renderBand(b){
   b.buf=new AudioBuffer({length:n,numberOfChannels:1,sampleRate:sr});b.buf.copyToChannel(out,0);
 }
 
-/* ---------- Character: one sweep from clean, through warm (even-order), to gritty (odd-order) ---------- */
-function charParams(c){const d=.02+10*c**1.7,e=.4*Math.exp(-(((c-.42)/.22)**2));return{d,e,n0:Math.tanh(d*e),den:Math.tanh(d)}}
-const sat=(x,p)=>(Math.tanh(p.d*(x+p.e))-p.n0)/p.den;
+/* ---------- Saturation types. Drive 0 is a clean tracked boost for all of them. ----------
+   Tube: soft and biased, so even harmonics (octave) lead. Tape: soft and symmetric, gentle odd harmonics.
+   Transistor: flat until it clips hard, strong odd harmonics. */
+const TYPES={
+  tube:{g:Math.tanh,e:.3,k:7},
+  tape:{g:u=>u/Math.sqrt(1+u*u),e:0,k:6},
+  transistor:{g:u=>u/Math.pow(1+u*u*u*u,.25),e:.04,k:12}
+};
+function charParams(c,type){const t=TYPES[type],d=.02+t.k*c**1.5;return{d,e:t.e,g:t.g,n0:t.g(d*t.e),den:t.g(d)}}
+const sat=(x,p)=>(p.g(p.d*(x+p.e))-p.n0)/p.den;
 function setCharacter(b,c){
-  b.character=c;const p=b.cp=charParams(c);
+  b.character=c;const p=b.cp=charParams(c,b.type);
   const cur=new Float32Array(4097);for(let i=0;i<4097;i++)cur[i]=sat(i/2048-1,p);b.curve=cur;
   if(b.nodes)b.nodes.sh.curve=cur;
   // harmonic profile for the display: level of harmonics 2..8 relative to the fundamental
@@ -330,7 +341,7 @@ function stop(){if(playing)off0=pos();stopSrc();playing=false;$('play').textCont
 function addBand(fc,amount,quiet){
   if(bands.length>=MAXB){status('Four bands is the limit. Remove one to add another.');return null}
   let ci=0;while(bands.some(b=>b.ci===ci))ci++;
-  const b={ci,fc:clamp(fc,30,8000),amount:clamp(amount,AMIN,AMAX),focus:.5,solo:false,byp:false,df:0,da:0};
+  const b={ci,fc:clamp(fc,30,8000),amount:clamp(amount,AMIN,AMAX),focus:.5,glide:.5,type:fc<200?'tube':'tape',solo:false,byp:false,df:0,da:0};
   setCharacter(b,fc<200?.42:.3);                       // warmer default in the low register
   bands.push(b);mkNodes(b);if(!quiet)select(b);request(b);return b;
 }
@@ -362,17 +373,19 @@ function knob(id,label,min,max,def,text,onInput){
   return{set};
 }
 const kAmt=knob('k-amount','Amount',AMIN,AMAX,0,v=>(v>0?'+':'')+v.toFixed(1)+' dB',v=>{if(sel){sel.amount=v;updateGains()}});
-const kChr=knob('k-char','Character',0,1,.3,v=>v<.06?'Clean':v<.6?'Warm '+Math.round(v*100):'Gritty '+Math.round(v*100),v=>{if(sel){setCharacter(sel,v);dirty=true}});
+const kChr=knob('k-char','Drive',0,1,.3,v=>v<.04?'Clean':Math.round(v*100)+'%',v=>{if(sel){setCharacter(sel,v);dirty=true}});
 const kFoc=knob('k-focus','Focus',0,1,.5,v=>(v<.4?'Tight':v>.6?'Loose':'Auto')+(sel?' ±'+winOf({fc:sel.fc,focus:v}).toFixed(1):''),v=>{if(sel){sel.focus=v;dirty=true;request(sel)}});
+const kGld=knob('k-glide','Glide',0,1,.5,v=>sel?Math.round(interp(GLD,sel.fc)*gsc(v))+' ms':'Auto',v=>{if(sel){sel.glide=v;request(sel)}});
 function syncPanel(){
   const b=sel,p=$('panel');p.hidden=!b;if(!b)return;
   p.style.setProperty('--c',COL[b.ci]);$('pname').textContent='Band '+(b.ci+1);
-  kAmt.set(b.amount);kChr.set(b.character);kFoc.set(b.focus);
+  kAmt.set(b.amount);kChr.set(b.character);kFoc.set(b.focus);kGld.set(b.glide);$('type').value=b.type;
   $('solo').setAttribute('aria-pressed',b.solo);$('byp').setAttribute('aria-pressed',b.byp);
 }
 function select(b){sel=b;syncPanel();dirty=true}
 $('solo').onclick=()=>{if(!sel)return;sel.solo=!sel.solo;syncPanel();updateGains()};
 $('byp').onclick=()=>{if(!sel)return;sel.byp=!sel.byp;syncPanel();updateGains()};
+$('type').onchange=e=>{if(sel){sel.type=e.target.value;setCharacter(sel,sel.character);dirty=true}};
 $('del').onclick=()=>{if(sel)removeBand(sel)};
 
 /* ---------- Display ---------- */
@@ -387,13 +400,15 @@ new ResizeObserver(size).observe(cv);
 const sRe=new Float64Array(SN),sIm=new Float64Array(SN),pRe=new Float64Array(SN),pIm=new Float64Array(SN);
 const dDry=new Float32Array(SN/2).fill(-140),dPost=new Float32Array(SN/2).fill(-140);
 function spectrum(){
-  const N=SN,w=hann(N),fft=getFFT(N),o=Math.round(pos()*S.sr)-N/2,n=S.n,m=S.mono,dg=dryGain();
+  const N=SN,w=hann(N),fft=getFFT(N),o=Math.round(pos()*S.sr)-N/2,n=S.n,m=S.mono,dg=dryGain();let wet=0;
   const act=bands.filter(b=>b.data&&bandGain(b)>0).map(b=>({d:b.data,g:bandGain(b),p:b.cp}));
   for(let i=0;i<N;i++){
     const k=o+i,ok=k>=0&&k<n,x=ok?m[k]:0;let y=x*dg;
     if(ok)for(const a of act)y+=a.g*sat(a.d[k],a.p);
-    sRe[i]=x*w[i];sIm[i]=0;pRe[i]=y*w[i];pIm[i]=0;
+    sRe[i]=x;pRe[i]=y;wet+=y-x*dg;
   }
+  wet/=N;                                           // the audio path has a DC blocker; mirror it here
+  for(let i=0;i<N;i++){pRe[i]=(pRe[i]-wet)*w[i];pIm[i]=0;sRe[i]*=w[i];sIm[i]=0}
   fft(sRe,sIm);fft(pRe,pIm);
   const bin=S.sr/N,kmax=Math.min(N/2-1,Math.ceil(FHI/bin)+1),sc=4/N,dec=playing?1.6:1e9;
   for(let k=1;k<=kmax;k++){
@@ -501,7 +516,12 @@ cv.addEventListener('pointerdown',e=>{
 });
 cv.addEventListener('pointermove',e=>{
   const p=pt(e);
-  if(drag){const b=drag.b;b.fc=clamp(fOf(p.x-drag.dx),30,8000);if(drag.node)b.amount=clamp(aOf(p.y-drag.dy),AMIN,AMAX);
+  if(drag){const b=drag.b;b.fc=clamp(fOf(p.x-drag.dx),30,8000);
+    if(!e.altKey)for(const o of bands){            // snap: band edges lock together when they come close
+      if(o===b)continue;const[ol,oh]=edges(o),[l,h]=edges(b);
+      if(Math.abs(xOf(h)-xOf(ol))<9){for(let i=0;i<3;i++)b.fc=clamp(ol*2**(-winOf(b)/12),30,8000);break}
+      if(Math.abs(xOf(l)-xOf(oh))<9){for(let i=0;i<3;i++)b.fc=clamp(oh*2**(winOf(b)/12),30,8000);break}
+    }if(drag.node)b.amount=clamp(aOf(p.y-drag.dy),AMIN,AMAX);
     syncPanel();updateGains();request(b);return}
   const h=S.ready&&hit(p);cv.style.cursor=h?(h.node?'grab':'ew-resize'):'crosshair';
 });
