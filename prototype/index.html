@@ -276,7 +276,14 @@ const sat=(x,p)=>p.g(p.d*x)/p.den;
 function setCharacter(b,c){
   b.character=c;const p=b.cp=charParams(c,b.type);
   const cur=new Float32Array(4097);for(let i=0;i<4097;i++){const x=i/2048-1;cur[i]=sat(x,p)-x}b.curve=cur;   // only what the saturator adds; the clean copy bypasses it
-  if(b.nodes){b.nodes.sh.curve=cur;b.nodes.ge.gain.value=p.ev}
+  if(b.nodes){
+    const nd=b.nodes,t=ac.currentTime;nd.ge.gain.setTargetAtTime(p.ev,t,.015);
+    if(playing){   // swapping a curve in place steps the waveform; fade a new shaper in over the old one instead
+      const osh=nd.sh,osf=nd.sf,sh=ac.createWaveShaper(),sf=ac.createGain();sh.curve=cur;sf.gain.value=0;
+      nd.inp.connect(sh);sh.connect(sf);sf.connect(nd.hp);sf.gain.setTargetAtTime(1,t,.015);osf.gain.setTargetAtTime(0,t,.015);
+      setTimeout(()=>{try{nd.inp.disconnect(osh);osf.disconnect()}catch(e){}},250);nd.sh=sh;nd.sf=sf;
+    }else nd.sh.curve=cur;
+  }
   // harmonic profile for the display: level of harmonics 2..8 relative to the fundamental
   const K=256,h=[];let m1=1;
   for(let k=1;k<=8;k++){let re=0,im=0;for(let i=0;i<K;i++){const v=sat(.5*Math.sin(TAU*i/K),p);re+=v*Math.cos(TAU*k*i/K);im+=v*Math.sin(TAU*k*i/K)}
@@ -322,8 +329,8 @@ function mkNodes(b){
   // the band, so no band can add energy under the notes it follows
   const g=ac.createGain(),ge=ac.createGain(),inp=ac.createGain(),hp=ac.createBiquadFilter();
   hp.type='highpass';hp.Q.value=.707;hp.frequency.value=.4*edges(b)[0];
-  g.gain.value=0;ge.gain.value=b.cp.ev;const gg=ac.createGain();inp.connect(g);inp.connect(sh);sh.connect(hp);ge.connect(hp);hp.connect(gg);gg.connect(g);g.connect(master);
-  b.nodes={sh,g,ge,inp,hp,gg};
+  g.gain.value=0;ge.gain.value=b.cp.ev;const gg=ac.createGain();const sf=ac.createGain();inp.connect(g);inp.connect(sh);sh.connect(sf);sf.connect(hp);ge.connect(hp);hp.connect(gg);gg.connect(g);g.connect(master);
+  b.nodes={sh,sf,g,ge,inp,hp,gg};
 }
 const anySolo=()=>bands.some(b=>b.solo);
 // Solo + bypass: hear the band's clean copy of the note, with nothing generated on top.
@@ -338,12 +345,13 @@ function updateGains(){
 const pos=()=>playing?clamp(off0+ac.currentTime-t0,off0,dur()):off0;
 function startBand(b,t,at){
   if(!b.buf||!b.nodes)return;
-  // A re-rendered band replaces its audio mid-playback. Crossfade old to new over 40 ms so the swap cannot tick.
-  const F=.04,swap=!!b.src,o=clamp(at,0,Math.max(0,dur()-.001));
-  if(swap){for(const f of b.fades){f.gain.setValueAtTime(1,t);f.gain.linearRampToValueAtTime(0,t+F)}
-    for(const old of[b.src,b.src2]){try{old.stop(t+F+.01)}catch(e){}}}
+  // A re-rendered band replaces its audio mid-playback. Crossfade old to new so the swap cannot tick. Each fade
+  // starts from wherever the gain is now, so swaps arriving in quick succession (a knob being turned) stay smooth.
+  const F=.012,swap=!!b.src,o=clamp(at,0,Math.max(0,dur()-.001));
+  if(swap){for(const f of b.fades)f.gain.setTargetAtTime(0,t,F);
+    for(const old of[b.src,b.src2]){try{old.stop(t+.12)}catch(e){}}}
   const mk=(buf,dest)=>{const s=ac.createBufferSource(),f=ac.createGain();s.buffer=buf;s.connect(f);f.connect(dest);
-    if(swap){f.gain.setValueAtTime(0,t);f.gain.linearRampToValueAtTime(1,t+F)}s.start(t,o);return[s,f]};
+    if(swap){f.gain.value=0;f.gain.setTargetAtTime(1,t,F)}s.start(t,o);return[s,f]};
   const[s,f1]=mk(b.buf,b.nodes.inp),[s2,f2]=mk(b.buf2,b.nodes.ge);
   b.src=s;b.src2=s2;b.fades=[f1,f2];b.nodes.hp.frequency.setTargetAtTime(.4*edges(b)[0],t,.02);
 }

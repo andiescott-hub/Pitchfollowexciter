@@ -79,6 +79,7 @@ public:
             for (int b = 0; b < kBands; ++b)
                 if (params[b].enabled) bandSample (bands[b], x, bands[b].s[(size_t) i], bands[b].q[(size_t) i]);
         }
+        for (auto& B : bands) B.pkTo = std::max (B.peak, 1.0e-4f);
     }
 
     const float* delayed() const   { return dly.data(); }
@@ -90,14 +91,23 @@ public:
     void generate (int b, const float* sIn, const float* qIn, float* gen, int n) const
     {
         const Band& B = bands[b];
-        const Shaper& sh = B.shaper;
-        const float pk = std::max (B.peak, 1.0e-4f), inv = sh.d / pk, out = pk / sh.den;
+        const Shaper& now_ = B.shaper;
+        const Shaper& old = B.prevShaper;
+        const float step = 1.0f / (float) n;
         for (int i = 0; i < n; ++i) {
+            // Everything that changes between blocks (level reference, drive, type) is ramped across the block,
+            // so turning a knob never steps the waveform.
+            const float t = (float) (i + 1) * step, pk = B.pkFrom + (B.pkTo - B.pkFrom) * t;
             const float x = sIn[i], y = qIn[i];
-            const float odd = out * sh.curve (x * inv);
+            float odd = pk / now_.den * now_.curve (x * now_.d / pk), even = now_.even;
+            if (B.shaperChanged) {
+                const float was = pk / old.den * old.curve (x * old.d / pk);
+                odd = was + (odd - was) * t;
+                even = old.even + (now_.even - old.even) * t;
+            }
             // 2*x*y is a pure octave above the note. Unlike a biased curve it has no envelope-rate term,
             // so it cannot thump. Dividing by the envelope keeps its level proportional to the note.
-            const float oct = sh.even * 2.0f * x * y / std::sqrt (x * x + y * y + 1.0e-18f);
+            const float oct = even * 2.0f * x * y / std::sqrt (x * x + y * y + 1.0e-18f);
             gen[i] = odd - x + oct;
         }
     }
@@ -161,7 +171,9 @@ private:
         float ic1 = 0, ic2 = 0, a1 = 0, a2 = 0, a3 = 0, k = 1, Q = 10;
         int   coefCount = 0;
         // saturation
-        Shaper shaper;
+        Shaper shaper, prevShaper;
+        bool  shaperChanged = false;
+        float pkFrom = 1.0e-4f, pkTo = 1.0e-4f;
         float peak = 0;
         // highpass on the generated part
         float hb0 = 1, hb1 = 0, ha1 = 0, ha2 = 0, hz1 = 0, hz2 = 0;
@@ -175,7 +187,7 @@ private:
         {
             prevHz = runMax = lastHz = lastAmp = 0; lastOn = false;
             qHead = qCount = 0; gate = 0; tgtOn = false;
-            ic1 = ic2 = hz1 = hz2 = 0; peak = 0; coefCount = 0;
+            ic1 = ic2 = hz1 = hz2 = 0; peak = 0; coefCount = 0; pkFrom = pkTo = 1.0e-4f;
         }
     };
 
@@ -195,7 +207,12 @@ private:
             B.fixed = glideFixed (p.glide);
             B.fixedLog = std::log (p.fc);
             B.glideCoef = 1.0f - std::exp (-1.0f / (glideMs (p.fc, p.glide) * 0.001f * (float) sr));
+            const bool fresh = B.pkTo <= 1.0e-4f && B.peak <= 0.0f;
+            B.prevShaper = B.shaper;
             B.shaper.set (p.type, p.drive);
+            if (fresh) B.prevShaper = B.shaper;
+            B.shaperChanged = B.prevShaper.type != B.shaper.type || std::fabs (B.prevShaper.d - B.shaper.d) > 1.0e-7f;
+            B.pkFrom = B.pkTo;
             if (bass < 0 || p.fc < params[bass].fc) bass = b;
             // 2nd-order highpass at 0.4 x the window's lower edge
             const float w = 6.2831853f * std::min (0.4f * B.lo, 0.3f * (float) sr) / (float) sr;

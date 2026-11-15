@@ -98,6 +98,27 @@ int main()
         check (db < -60.0, "no low-frequency content generated");
     }
 
+    std::printf ("4. Drive jumped between 0.1 and 0.9 on a steady note: does the output step when the setting changes\n");
+    {
+        Engine e; setup (e, true, 220.0f, 0.0f, Transistor);
+        const auto in = tone (220, 220, 3.0, 9, false);
+        std::vector<float> wet (in.size());
+        // Parameters change at block boundaries, so a step would show up there and nowhere else.
+        double atBoundary = 0, inside = 0;
+        for (size_t o = 0; o + 256 <= in.size(); o += 256) {
+            const double t = o / SR;
+            e.params[0].drive = ((o / 256) / 20) % 2 ? 0.9f : 0.1f;
+            e.processMono (in.data() + o, wet.data() + o, 256);
+            if (t < 1.0) continue;
+            for (size_t i = o; i < o + 256; ++i) {
+                const double d2 = std::fabs ((double) wet[i] - wet[i - 1]);
+                if (i == o) atBoundary = std::max (atBoundary, d2); else inside = std::max (inside, d2);
+            }
+        }
+        std::printf ("     largest sample-to-sample jump at block boundaries %.5f, inside blocks %.5f\n", atBoundary, inside);
+        check (atBoundary <= inside * 1.05, "no steps while the knob moves");
+    }
+
     std::printf ("%s\n", failures ? "FAILED" : "all checks passed");
     return failures ? 1 : 0;
 }
