@@ -240,19 +240,23 @@ function renderBand(b){
   const gl=interp(GLD,b.fc)*gsc(b.glide),Q=interp(QS,b.fc),gc=1-Math.exp(-1/(gl*.001*sr));
   const att=1-Math.exp(-1/(.004*sr)),rel=1-Math.exp(-1/(.05*sr)),half=r.N/2,hop=r.hop,last=t.nF-1,mk=t.mask;
   const lf=new Float32Array(t.nF);for(let f=0;f<t.nF;f++)lf[f]=Math.log(t.freq[f]);
-  let cur=lf[0],g=0,x1=0,x2=0,y1=0,y2=0,cb=0,c1=0,c2=0,pk=0;
+  const ev=new Float32Array(n);let cur=lf[0],g=0,x1=0,x2=0,y1=0,y2=0,l1=0,l2=0,cb=0,cl=0,c1=0,c2=0,pk=0;
   for(let i=0;i<n;i++){
     let ft=(i-half)/hop,fi=Math.floor(ft),fr=ft-fi;
     if(fi<0){fi=0;fr=0}else if(fi>=last){fi=last;fr=0}
     const j=fi<last?fi+1:fi;
     cur+=(lf[fi]+(lf[j]-lf[fi])*fr-cur)*gc;
     const tg=mk[fi]+(mk[j]-mk[fi])*fr;g+=(tg-g)*(tg>g?att:rel);
-    if((i&31)===0){const w=TAU*Math.exp(cur)/sr,al=Math.sin(w)/(2*Q),a0=1+al;cb=al/a0;c1=-2*Math.cos(w)/a0;c2=(1-al)/a0}
-    const x=m[i],y=cb*(x-x2)-c1*y1-c2*y2;x2=x1;x1=x;y2=y1;y1=y;
+    if((i&31)===0){const w=TAU*Math.exp(cur)/sr,al=Math.sin(w)/(2*Q),a0=1+al;cb=al/a0;cl=(1-Math.cos(w))/(2*a0*Q);c1=-2*Math.cos(w)/a0;c2=(1-al)/a0}
+    const x=m[i],y=cb*(x-x2)-c1*y1-c2*y2,lq=cl*(x+2*x1+x2)-c1*l1-c2*l2;x2=x1;x1=x;y2=y1;y1=y;l2=l1;l1=lq;
+    // lq is the same note shifted a quarter cycle. 2*s*q is then a pure octave above the note with no
+    // envelope-rate (low frequency) term, which a biased saturator would produce.
+    const qg=lq*g;ev[i]=2*y*g*qg/Math.sqrt(y*g*y*g+qg*qg+1e-18);
     const s=y*g;out[i]=s;const a=s<0?-s:s;if(a>pk)pk=a;
   }
-  if(pk>1e-9){const k=1/pk;for(let i=0;i<n;i++)out[i]*=k}else pk=0;
-  b.data=out;b.pk=pk;b.sig=b.newSig;
+  if(pk>1e-9){const k=1/pk;for(let i=0;i<n;i++){out[i]*=k;ev[i]*=k}}else pk=0;
+  b.data=out;b.ev=ev;b.pk=pk;b.sig=b.newSig;
+  b.buf2=new AudioBuffer({length:n,numberOfChannels:1,sampleRate:sr});b.buf2.copyToChannel(ev,0);
   b.buf=new AudioBuffer({length:n,numberOfChannels:1,sampleRate:sr});b.buf.copyToChannel(out,0);
 }
 
@@ -260,20 +264,22 @@ function renderBand(b){
    Tube: soft and biased, so even harmonics (octave) lead. Tape: soft and symmetric, gentle odd harmonics.
    Transistor: flat until it clips hard, strong odd harmonics. */
 const TYPES={
-  tube:{g:Math.tanh,e:.3,k:7},
-  tape:{g:u=>u/Math.sqrt(1+u*u),e:0,k:6},
-  transistor:{g:u=>u/Math.pow(1+u*u*u*u,.25),e:.04,k:12}
+  tube:{g:Math.tanh,ev:.7,k:7},
+  tape:{g:u=>u/Math.sqrt(1+u*u),ev:.08,k:6},
+  transistor:{g:u=>u/Math.pow(1+u*u*u*u,.25),ev:0,k:12}
 };
-function charParams(c,type){const t=TYPES[type],d=.02+t.k*c**1.5;return{d,e:t.e,g:t.g,n0:t.g(d*t.e),den:t.g(d)}}
-const sat=(x,p)=>(p.g(p.d*(x+p.e))-p.n0)/p.den;
+// Every curve is symmetric (odd harmonics only). Even harmonics come from the separate octave signal, scaled by ev.
+function charParams(c,type){const t=TYPES[type],d=.02+t.k*c**1.5;return{d,g:t.g,den:t.g(d),ev:t.ev*c}}
+const sat=(x,p)=>p.g(p.d*x)/p.den;
 function setCharacter(b,c){
   b.character=c;const p=b.cp=charParams(c,b.type);
-  const cur=new Float32Array(4097);for(let i=0;i<4097;i++)cur[i]=sat(i/2048-1,p);b.curve=cur;
-  if(b.nodes)b.nodes.sh.curve=cur;
+  const cur=new Float32Array(4097);for(let i=0;i<4097;i++){const x=i/2048-1;cur[i]=sat(x,p)-x}b.curve=cur;   // only what the saturator adds; the clean copy bypasses it
+  if(b.nodes){b.nodes.sh.curve=cur;b.nodes.ge.gain.value=p.ev}
   // harmonic profile for the display: level of harmonics 2..8 relative to the fundamental
   const K=256,h=[];let m1=1;
   for(let k=1;k<=8;k++){let re=0,im=0;for(let i=0;i<K;i++){const v=sat(.5*Math.sin(TAU*i/K),p);re+=v*Math.cos(TAU*k*i/K);im+=v*Math.sin(TAU*k*i/K)}
     const mg=Math.hypot(re,im);if(k===1)m1=mg||1;else h.push(20*Math.log10(mg/m1+1e-9))}
+  if(p.ev>0)h[0]=20*Math.log10(Math.hypot(K*.25*p.ev,m1*10**(h[0]/20))/m1+1e-9);
   b.harm=h;
 }
 
@@ -310,9 +316,12 @@ function ensureCtx(){
 function mkNodes(b){
   if(!ac||b.nodes)return;
   const sh=ac.createWaveShaper();sh.curve=b.curve;
-  const hp=ac.createIIRFilter([1,-1],[1,-(1-TAU*5/ac.sampleRate)]);   // DC blocker for the even-order bias
-  const g=ac.createGain();g.gain.value=0;sh.connect(hp);hp.connect(g);g.connect(master);
-  b.nodes={sh,g};
+  // clean copy goes straight through (keeps its phase); everything generated passes a highpass set below
+  // the band, so no band can add energy under the notes it follows
+  const g=ac.createGain(),ge=ac.createGain(),inp=ac.createGain(),hp=ac.createBiquadFilter();
+  hp.type='highpass';hp.Q.value=.707;hp.frequency.value=.4*edges(b)[0];
+  g.gain.value=0;ge.gain.value=b.cp.ev;inp.connect(g);inp.connect(sh);sh.connect(hp);ge.connect(hp);hp.connect(g);g.connect(master);
+  b.nodes={sh,g,ge,inp,hp};
 }
 const anySolo=()=>bands.some(b=>b.solo);
 const dryGain=()=>listen==='added'||anySolo()?0:1;
@@ -325,10 +334,12 @@ function updateGains(){
 const pos=()=>playing?clamp(off0+ac.currentTime-t0,off0,dur()):off0;
 function startBand(b,t,at){
   if(!b.buf||!b.nodes)return;
-  if(b.src){try{b.src.stop(t)}catch(e){}}
-  const s=ac.createBufferSource();s.buffer=b.buf;s.connect(b.nodes.sh);s.start(t,clamp(at,0,Math.max(0,dur()-.001)));b.src=s;
+  for(const o of[b.src,b.src2])if(o){try{o.stop(t)}catch(e){}}
+  const o=clamp(at,0,Math.max(0,dur()-.001));
+  const s=ac.createBufferSource();s.buffer=b.buf;s.connect(b.nodes.inp);s.start(t,o);b.src=s;b.nodes.hp.frequency.value=.4*edges(b)[0];
+  const s2=ac.createBufferSource();s2.buffer=b.buf2;s2.connect(b.nodes.ge);s2.start(t,o);b.src2=s2;
 }
-function stopSrc(){[srcDry,...bands.map(b=>b.src)].forEach(s=>{if(s){try{s.stop()}catch(e){}}});srcDry=null;bands.forEach(b=>b.src=null)}
+function stopSrc(){[srcDry,...bands.flatMap(b=>[b.src,b.src2])].forEach(s=>{if(s){try{s.stop()}catch(e){}}});srcDry=null;bands.forEach(b=>b.src=b.src2=null)}
 function start(at){
   stopSrc();const t=ac.currentTime+.04;
   srcDry=ac.createBufferSource();srcDry.buffer=S.dry;srcDry.connect(dryG);srcDry.start(t,at);
@@ -346,7 +357,7 @@ function addBand(fc,amount,quiet){
   bands.push(b);mkNodes(b);if(!quiet)select(b);request(b);return b;
 }
 function removeBand(b){
-  if(b.src){try{b.src.stop()}catch(e){}}
+  for(const o of[b.src,b.src2])if(o){try{o.stop()}catch(e){}}
   if(b.nodes)b.nodes.g.disconnect();
   bands=bands.filter(x=>x!==b);if(sel===b)select(null);
   updateGains();request(null);
@@ -401,10 +412,10 @@ const sRe=new Float64Array(SN),sIm=new Float64Array(SN),pRe=new Float64Array(SN)
 const dDry=new Float32Array(SN/2).fill(-140),dPost=new Float32Array(SN/2).fill(-140);
 function spectrum(){
   const N=SN,w=hann(N),fft=getFFT(N),o=Math.round(pos()*S.sr)-N/2,n=S.n,m=S.mono,dg=dryGain();let wet=0;
-  const act=bands.filter(b=>b.data&&bandGain(b)>0).map(b=>({d:b.data,g:bandGain(b),p:b.cp}));
+  const act=bands.filter(b=>b.data&&bandGain(b)>0).map(b=>({d:b.data,e:b.ev,g:bandGain(b),p:b.cp}));
   for(let i=0;i<N;i++){
     const k=o+i,ok=k>=0&&k<n,x=ok?m[k]:0;let y=x*dg;
-    if(ok)for(const a of act)y+=a.g*sat(a.d[k],a.p);
+    if(ok)for(const a of act)y+=a.g*(sat(a.d[k],a.p)+a.p.ev*a.e[k]);
     sRe[i]=x;pRe[i]=y;wet+=y-x*dg;
   }
   wet/=N;                                           // the audio path has a DC blocker; mirror it here
@@ -554,7 +565,7 @@ async function useAudio(L,R,sr,name,long){
   const n=L.length,mono=new Float32Array(n);for(let i=0;i<n;i++)mono[i]=.5*(L[i]+R[i]);
   const dry=new AudioBuffer({length:n,numberOfChannels:2,sampleRate:sr});dry.copyToChannel(L,0);dry.copyToChannel(R,1);
   Object.assign(S,{sr,n,mono,dry,name:name+(long?' (first 2 minutes)':'')});
-  bands.forEach(b=>{b.track=null;b.sig=null;b.data=null;b.buf=null;b.df=0});
+  bands.forEach(b=>{b.track=null;b.sig=null;b.data=null;b.ev=null;b.buf=b.buf2=null;b.df=0});
   await analyse();detectKey();setKeyMask();
   S.ready=true;$('seek').max=dur();$('seek').value=0;$('time').textContent='0:00 / '+fmt(dur());$('play').disabled=false;
   request(null);
@@ -597,6 +608,7 @@ $('file').addEventListener('change',async e=>{
   e.target.value='';
 });
 
+window.pfx={get bands(){return bands},S,sat};
 size();requestAnimationFrame(loop);loadDemo(true);
 })();
 </script>
