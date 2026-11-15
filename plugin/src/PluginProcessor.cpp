@@ -107,7 +107,7 @@ void PfxProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         p.type     = (int) band[b].type->load();
         p.focus    = band[b].focus->load();
         p.glide    = band[b].glide->load();
-        anySolo = anySolo || (p.enabled && band[b].solo->load() > 0.5f);
+        anySolo = anySolo || (p.enabled && band[b].solo->load() > 0.5f && band[b].byp->load() < 0.5f);   // a bypassed band drops out of solo
     }
     const float dryTarget = (listen == 1 || anySolo) ? 0.0f : 1.0f;
     const int delay = engine.latency();

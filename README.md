@@ -18,7 +18,7 @@ the frequency display is the main control surface and a small floating panel hol
 | Drag a band | Move its centre frequency; the window width follows automatically |
 | Drag a band's dot up or down | Amount |
 | Scroll over a band | Focus (window width, hysteresis and glide together) |
-| Select a band | Floating panel: Amount, Drive, Focus, Glide, saturation type (Tube, Tape, Transistor), solo, bypass, remove |
+| Select a band | Floating panel: Amount, Drive, Focus, Glide (far left = fixed band, far right = 3 s), saturation type (Tube, Tape, Transistor), solo, bypass, remove |
 | Drag a band next to another | Edges snap together (hold Alt to place freely) |
 | Arrow keys, Delete | Nudge or remove the selected band |
 

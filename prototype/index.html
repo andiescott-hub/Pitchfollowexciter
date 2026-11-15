@@ -123,7 +123,9 @@ const fmt=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
 const dur=()=>S.n/S.sr||0;
 const interp=(p,f)=>{if(f<=p[0][0])return p[0][1];for(let i=1;i<p.length;i++)if(f<=p[i][0]){const a=p[i-1],b=p[i];return a[1]+(b[1]-a[1])*Math.log(f/a[0])/Math.log(b[0]/a[0])}return p[p.length-1][1]};
 const fsc=focus=>2**((focus-.5)*1.4);
-const gsc=g=>2**((g-.5)*4);
+// Glide knob: far left = fixed (no following, the band sits at its centre), 0.5 = automatic, far right = 3 s.
+const isFixed=g=>g<.02;
+const glideMs=(fc,g)=>{const a=interp(GLD,fc);return g<=.5?a*2**((g-.5)*4):a*(3000/a)**((g-.5)*2)};
 const winOf=b=>interp(WIN,b.fc)*fsc(b.focus);
 const edges=b=>{const w=winOf(b);return[b.fc*2**(-w/12),b.fc*2**(w/12)]};
 const resFor=f=>f<120?0:f<500?1:f<2000?2:3;
@@ -237,9 +239,9 @@ function computeMasks(){
 /* ---------- Per-band render: tracked bandpass gives a phase-locked copy of the note ---------- */
 function renderBand(b){
   const t=b.track,r=RES[b.res],n=S.n,sr=S.sr,m=S.mono,out=new Float32Array(n);
-  const gl=interp(GLD,b.fc)*gsc(b.glide),Q=interp(QS,b.fc),gc=1-Math.exp(-1/(gl*.001*sr));
+  const fixed=isFixed(b.glide),gl=fixed?.01:glideMs(b.fc,b.glide),Q=interp(QS,b.fc),gc=1-Math.exp(-1/(gl*.001*sr));
   const att=1-Math.exp(-1/(.004*sr)),rel=1-Math.exp(-1/(.05*sr)),half=r.N/2,hop=r.hop,last=t.nF-1,mk=t.mask;
-  const lf=new Float32Array(t.nF);for(let f=0;f<t.nF;f++)lf[f]=Math.log(t.freq[f]);
+  const lf=new Float32Array(t.nF);for(let f=0;f<t.nF;f++)lf[f]=Math.log(fixed?b.fc:t.freq[f]);
   const ev=new Float32Array(n);let cur=lf[0],g=0,x1=0,x2=0,y1=0,y2=0,l1=0,l2=0,cb=0,cl=0,c1=0,c2=0,pk=0;
   for(let i=0;i<n;i++){
     let ft=(i-half)/hop,fi=Math.floor(ft),fr=ft-fi;
@@ -323,7 +325,7 @@ function mkNodes(b){
   g.gain.value=0;ge.gain.value=b.cp.ev;inp.connect(g);inp.connect(sh);sh.connect(hp);ge.connect(hp);hp.connect(g);g.connect(master);
   b.nodes={sh,g,ge,inp,hp};
 }
-const anySolo=()=>bands.some(b=>b.solo);
+const anySolo=()=>bands.some(b=>b.solo&&!b.byp);   // bypassing a soloed band drops out of solo, so you hear the mix without it
 const dryGain=()=>listen==='added'||anySolo()?0:1;
 const bandGain=b=>listen==='dry'||b.byp||(anySolo()&&!b.solo)?0:b.pk*10**(b.amount/20);
 function updateGains(){
@@ -386,7 +388,7 @@ function knob(id,label,min,max,def,text,onInput){
 const kAmt=knob('k-amount','Amount',AMIN,AMAX,0,v=>(v>0?'+':'')+v.toFixed(1)+' dB',v=>{if(sel){sel.amount=v;updateGains()}});
 const kChr=knob('k-char','Drive',0,1,.3,v=>v<.04?'Clean':Math.round(v*100)+'%',v=>{if(sel){setCharacter(sel,v);dirty=true}});
 const kFoc=knob('k-focus','Focus',0,1,.5,v=>(v<.4?'Tight':v>.6?'Loose':'Auto')+(sel?' ±'+winOf({fc:sel.fc,focus:v}).toFixed(1):''),v=>{if(sel){sel.focus=v;dirty=true;request(sel)}});
-const kGld=knob('k-glide','Glide',0,1,.5,v=>sel?Math.round(interp(GLD,sel.fc)*gsc(v))+' ms':'Auto',v=>{if(sel){sel.glide=v;request(sel)}});
+const kGld=knob('k-glide','Glide',0,1,.5,v=>isFixed(v)?'Fixed':sel?(m=>m<1000?Math.round(m)+' ms':(m/1000).toFixed(1)+' s')(glideMs(sel.fc,v)):'Auto',v=>{if(sel){sel.glide=v;request(sel)}});
 function syncPanel(){
   const b=sel,p=$('panel');p.hidden=!b;if(!b)return;
   p.style.setProperty('--c',COL[b.ci]);$('pname').textContent='Band '+(b.ci+1);
@@ -439,7 +441,7 @@ function specPath(arr){
 }
 function trackerAt(b){
   const t=b.track;if(!t||!S.ready)return;
-  const r=RES[b.res],fi=clamp(Math.round((pos()*S.sr-r.N/2)/r.hop),0,t.nF-1),lf=Math.log(t.freq[fi]),on=t.mask[fi];
+  const r=RES[b.res],fi=clamp(Math.round((pos()*S.sr-r.N/2)/r.hop),0,t.nF-1),lf=Math.log(isFixed(b.glide)?b.fc:t.freq[fi]),on=t.mask[fi];
   if(playing&&b.df){b.df+=(lf-b.df)*.4;b.da+=(on-b.da)*.35}else{b.df=lf;b.da=on}
 }
 function draw(){

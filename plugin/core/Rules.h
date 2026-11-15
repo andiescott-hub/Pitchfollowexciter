@@ -26,7 +26,13 @@ inline float autoGlideMs (float fc)  { static const Pt p[] = { { 80, 60 }, { 250
 inline float autoQ (float fc)        { static const Pt p[] = { { 40, 6 }, { 250, 17 } };                                 return interp (p, 2, fc); }
 
 inline float focusScale (float focus) { return std::pow (2.0f, (focus - 0.5f) * 1.4f); } // 0..1, 0.5 = automatic
-inline float glideScale (float glide) { return std::pow (2.0f, (glide - 0.5f) * 4.0f); } // 0..1, 0.5 = automatic
+// Glide knob, 0..1: far left = fixed (no following, the band sits at its centre), 0.5 = automatic, far right = 3 s.
+inline bool  glideFixed (float glide) { return glide < 0.02f; }
+inline float glideMs (float fc, float glide)
+{
+    const float a = autoGlideMs (fc);
+    return glide <= 0.5f ? a * std::pow (2.0f, (glide - 0.5f) * 4.0f) : a * std::pow (3000.0f / a, (glide - 0.5f) * 2.0f);
+}
 inline int   resFor (float fc)        { return fc < 120 ? 0 : fc < 500 ? 1 : fc < 2000 ? 2 : 3; }
 
 inline void bandEdges (float fc, float focus, float& lo, float& hi)

@@ -151,7 +151,8 @@ private:
         Event queue[128];
         int   qHead = 0, qCount = 0;
         // control
-        float tgtLog = 0, cur = 0, gate = 0, glideCoef = 1;
+        float tgtLog = 0, cur = 0, gate = 0, glideCoef = 1, fixedLog = 0;
+        bool  fixed = false;
         bool  tgtOn = false;
         // tracked filter (state-variable, stable under fast modulation)
         float ic1 = 0, ic2 = 0, a1 = 0, a2 = 0, a3 = 0, k = 1, Q = 10;
@@ -188,7 +189,9 @@ private:
             resUsed[B.res] = true;
             bandEdges (p.fc, p.focus, B.lo, B.hi);
             B.Q = autoQ (p.fc);
-            B.glideCoef = 1.0f - std::exp (-1.0f / (autoGlideMs (p.fc) * glideScale (p.glide) * 0.001f * (float) sr));
+            B.fixed = glideFixed (p.glide);
+            B.fixedLog = std::log (p.fc);
+            B.glideCoef = 1.0f - std::exp (-1.0f / (glideMs (p.fc, p.glide) * 0.001f * (float) sr));
             B.shaper.set (p.type, p.drive);
             if (bass < 0 || p.fc < params[bass].fc) bass = b;
             // 2nd-order highpass at 0.4 x the window's lower edge
@@ -290,11 +293,11 @@ private:
         while (B.qCount > 0 && B.queue[B.qHead].at <= now) {
             const Event& e = B.queue[B.qHead];
             B.tgtLog = e.logHz; B.tgtOn = e.on;
-            B.uiHz.store (std::exp (e.logHz), std::memory_order_relaxed);
+            B.uiHz.store (std::exp (B.fixed ? B.fixedLog : e.logHz), std::memory_order_relaxed);
             B.uiOn.store (e.on, std::memory_order_relaxed);
             B.qHead = (B.qHead + 1) & 127; --B.qCount;
         }
-        B.cur += (B.tgtLog - B.cur) * B.glideCoef;
+        if (B.fixed) B.cur = B.fixedLog; else B.cur += (B.tgtLog - B.cur) * B.glideCoef;
         const float tg = B.tgtOn ? 1.0f : 0.0f;
         B.gate += (tg - B.gate) * (tg > B.gate ? attack : release);
         if ((B.coefCount++ & 15) == 0) {
