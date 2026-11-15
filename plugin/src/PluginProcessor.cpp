@@ -26,8 +26,10 @@ APVTS::ParameterLayout PfxProcessor::createLayout()
         freq.setSkewForCentre (500.0f);
         l.add (std::make_unique<juce::AudioParameterBool>   (id (bandId (b, "on")),     name + "On", b < 3));
         l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "freq")),   name + "Frequency", freq, defFreq[b]));
-        l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "amount")), name + "Amount", juce::NormalisableRange<float> (-24.0f, 18.0f, 0.1f), 0.0f));
-        l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "drive")),  name + "Drive",  juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.3f));
+        l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "amount")), name + "Amount", juce::NormalisableRange<float> (-24.0f, 18.0f, 0.1f), 0.0f,
+               juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; })));
+        l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "drive")),  name + "Drive",  juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.3f,
+               juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v < 0.04f ? juce::String ("Clean") : juce::String (juce::roundToInt (v * 100.0f)) + "%"; })));
         l.add (std::make_unique<juce::AudioParameterChoice> (id (bandId (b, "type")),   name + "Type",   juce::StringArray { "Tube", "Tape", "Transistor" }, b == 0 ? 0 : 1));
         l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "focus")),  name + "Focus",  juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f));
         l.add (std::make_unique<juce::AudioParameterFloat>  (id (bandId (b, "glide")),  name + "Glide",  juce::NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f));
@@ -161,7 +163,28 @@ void PfxProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
             }
         }
         dryPos = (dryPos + n) & (kDelaySize - 1);
+
+        int sp = scopePos.load (std::memory_order_relaxed);
+        const float* outL = buffer.getReadPointer (0, offset);
+        const float* outR = buffer.getReadPointer (chans - 1, offset);
+        const float* del = engine.delayed();
+        for (int i = 0; i < n; ++i) {
+            scopeIn[sp] = del[i];
+            scopeOut[sp] = 0.5f * (outL[i] + outR[i]);
+            sp = (sp + 1) & (kScopeSize - 1);
+        }
+        scopePos.store (sp, std::memory_order_relaxed);
         lastDry = dryTarget;
+    }
+}
+
+void PfxProcessor::readScope (float* in, float* out, int n) const
+{
+    const int end = scopePos.load (std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i) {
+        const int k = (end - n + i) & (kScopeSize - 1);
+        in[i] = scopeIn[k];
+        out[i] = scopeOut[k];
     }
 }
 

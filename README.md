@@ -74,6 +74,31 @@ Modes:
 Oversampling (Off, 4x, 8x, 16x) applies to the saturator only. The clean phase-locked copy stays at
 the base rate, so oversampling adds no latency to it.
 
-Not yet in the plugin: spectrum analyser in the display, harmonic spikes, edge snapping,
-key auto-detect, harmonic budget, stereo wet signal (the added signal is mono, as in the prototype).
-The company name and plugin codes in `plugin/CMakeLists.txt` are placeholders.
+The editor matches the prototype: input and output spectrum, band windows, the note each band is
+following with its harmonic peaks, edge snapping, and Amount, Drive, Focus and Glide per band.
+
+Not yet in the plugin: key auto-detect (choose the key by hand), harmonic budget, stereo wet signal
+(the added signal is mono, as in the prototype). The company name and plugin codes in
+`plugin/CMakeLists.txt` are placeholders.
+
+### Getting a build without compiling
+
+Every push that touches `plugin/` builds macOS (VST3, AU, Standalone; Apple silicon and Intel) and
+Windows (VST3, Standalone) on GitHub Actions. Open the repository's Actions tab, pick the latest
+"Build plugin" run and download the zip for your system from Artifacts.
+
+Install on macOS:
+
+- `Pitch-follow Exciter.vst3` goes in `~/Library/Audio/Plug-Ins/VST3`
+- `Pitch-follow Exciter.component` goes in `~/Library/Audio/Plug-Ins/Components`
+
+The builds are not notarised by Apple, so macOS blocks them after download until you clear the
+quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Pitch-follow Exciter.vst3" ~/Library/Audio/Plug-Ins/Components/"Pitch-follow Exciter.component"
+```
+
+Install on Windows: copy `Pitch-follow Exciter.vst3` to `C:\Program Files\Common Files\VST3`.
+
+Then rescan plugins in your DAW.

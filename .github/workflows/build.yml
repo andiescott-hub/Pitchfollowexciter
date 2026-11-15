@@ -1,0 +1,59 @@
+name: Build plugin
+
+on:
+  push:
+    paths:
+      - "plugin/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            configure: -DCMAKE_OSX_ARCHITECTURES=arm64;x86_64
+          - name: Windows
+            os: windows-latest
+            configure: ""
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release "${{ matrix.configure }}"
+        shell: bash
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Engine tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir out
+          cp -R "build/PitchFollowExciter_artefacts/Release/VST3/Pitch-follow Exciter.vst3" out/
+          cp -R "build/PitchFollowExciter_artefacts/Release/AU/Pitch-follow Exciter.component" out/
+          cp -R "build/PitchFollowExciter_artefacts/Release/Standalone/Pitch-follow Exciter.app" out/
+          codesign --force --deep --sign - "out/Pitch-follow Exciter.vst3" "out/Pitch-follow Exciter.component" "out/Pitch-follow Exciter.app"
+          ditto -c -k out "Pitch-follow-Exciter-macOS.zip"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item -Recurse "build/PitchFollowExciter_artefacts/Release/VST3/Pitch-follow Exciter.vst3" out/
+          Copy-Item "build/PitchFollowExciter_artefacts/Release/Standalone/Pitch-follow Exciter.exe" out/
+          Compress-Archive -Path out/* -DestinationPath "Pitch-follow-Exciter-Windows.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pitch-follow-Exciter-${{ matrix.name }}
+          path: Pitch-follow-Exciter-${{ matrix.name }}.zip

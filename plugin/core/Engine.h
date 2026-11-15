@@ -144,7 +144,8 @@ public:
         }
     }
 
-    float trackedHz (int b) const { return bands[b].uiHz.load (std::memory_order_relaxed); }
+    float trackedHz (int b) const { return bands[b].uiHz.load (std::memory_order_relaxed); }      // the note the tracker chose
+    float filterHz (int b) const  { return bands[b].uiFilterHz.load (std::memory_order_relaxed); } // where the filter is now (after glide)
     bool  gateOpen (int b) const  { return bands[b].uiOn.load (std::memory_order_relaxed); }
 
 private:
@@ -180,7 +181,7 @@ private:
         float lo = 0, hi = 0;
         int   res = 0;
         std::vector<float> s, q;
-        std::atomic<float> uiHz { 0.0f };
+        std::atomic<float> uiHz { 0.0f }, uiFilterHz { 0.0f };
         std::atomic<bool>  uiOn { false };
 
         void reset()
@@ -323,6 +324,7 @@ private:
         B.gate += (tg - B.gate) * (tg > B.gate ? attack : release);
         if ((B.coefCount++ & 15) == 0) {
             const float f = std::clamp (std::exp (B.cur), 20.0f, 0.45f * (float) sr);
+            B.uiFilterHz.store (f, std::memory_order_relaxed);
             const float g = std::tan (3.14159265f * f / (float) sr);
             B.k = 1.0f / B.Q;
             B.a1 = 1.0f / (1.0f + g * (g + B.k)); B.a2 = g * B.a1; B.a3 = g * B.a2;

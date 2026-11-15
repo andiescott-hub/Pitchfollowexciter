@@ -32,7 +32,9 @@ public:
     static juce::String bandId (int band, const char* name) { return "b" + juce::String (band + 1) + "_" + name; }
 
     // read by the editor
-    float trackedHz (int b) const { return engine.trackedHz (b); }
+    float trackedHz (int b) const { return engine.filterHz (b); }
+    void readScope (float* in, float* out, int n) const;   // most recent n samples of input and output (mono)
+    double sampleRate() const     { return getSampleRate() > 0 ? getSampleRate() : 44100.0; }
     bool  gateOpen (int b) const  { return engine.gateOpen (b); }
 
     juce::AudioProcessorValueTreeState apvts;
@@ -55,6 +57,11 @@ private:
     static constexpr int kDelaySize = 32768;
     float dryRing[2][kDelaySize] {};
     int dryPos = 0;
+
+    // analyser feed: written on the audio thread, read by the editor (display only)
+    static constexpr int kScopeSize = 16384;
+    float scopeIn[kScopeSize] {}, scopeOut[kScopeSize] {};
+    std::atomic<int> scopePos { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PfxProcessor)
 };
